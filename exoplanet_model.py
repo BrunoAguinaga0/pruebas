@@ -17,38 +17,159 @@ FEATURE_COLS = [
     'stellar_radius', 'stteff', 'logg', 'tess_mag'
 ]
 
-def load_and_prepare(csv_path: str):
-    df = pd.read_csv(csv_path, comment='#', na_values=['',' '])
-    rename_map = {
-        'tid': 'tic_id',
-        'toi': 'toi',
-        'tfopwg_disp': 'disposition',
-        'pl_orbper': 'period/days',
-        'pl_tranmid': 'epoch_bjd',
-        'pl_trandurh': 'duration/hours',
-        'pl_trandep': 'depth',
-        'pl_rade': 'planet_radius',
-        'st_rad': 'stellar_radius',
-        'st_teff': 'stteff',
-        'st_logg': 'logg',
-        'st_tmag': 'tess_mag',
+from exoplanet_schema import load_schema, auto_map_columns, apply_mapping, columns_needed
+
+def load_and_standardize(csv_path: str,
+                        schema_path: str = "schema_mapping.json",
+                        interactive_map: dict = None):
+    """
+    1. Lee el CSV.
+    2. Aplica mapping automático (sinónimos + fuzzy si disponible).
+    3. Aplica mapping manual adicional (interactive_map) si se proporciona desde la UI.
+    4. Verifica columnas canónicas mínimas.
+    Devuelve: df, missing_after
+    """
+    df = pd.read_csv(csv_path, comment="#", na_values=["", " "])
+    schema = load_schema(schema_path)
+
+    # Paso 1: mapping automático
+    exact_map, unmapped, fuzzy_suggestions = auto_map_columns(list(df.columns), schema, fuzzy=True)
+
+    # Si el usuario pasó un mapping manual (col_original -> canon), se fusiona
+    if interactive_map:
+        exact_map.update(interactive_map)
+
+    df_std = apply_mapping(df, exact_map)
+
+    required = columns_needed(schema)
+    missing_after = [c for c in required if c not in df_std.columns]
+
+    info = {
+        "auto_mapped": exact_map,
+        "unmapped_original": unmapped,
+        "fuzzy_suggestions": fuzzy_suggestions,
+        "missing_after": missing_after
     }
-    df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
+    return df_std, info
+
+FEATURE_COLS = [
+    'period/days', 'duration/hours', 'depth', 'planet_radius',
+    'stellar_radius', 'stteff', 'logg', 'tess_mag'
+]
+
+KOI_DISP_MAP = {
+    "CONFIRMED": "CP",
+    "CANDIDATE": "PC",
+    "FALSE POSITIVE": "FP"
+}
+
+def _collapse_duplicate_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Si existen columnas duplicadas (mismo nombre), combina tomando el primer
+    valor no nulo por fila y deja una sola columna final.
+    """
+    if not df.columns.duplicated().any():
+        return df
+
+    # Recorremos cada nombre duplicado y consolidamos
+    new_cols = []
+    to_add = {}
+    seen = set()
+
+    for col in df.columns:
+        if col in seen:
+            continue
+        duplicates = df.columns[df.columns == col]
+        if len(duplicates) == 1:
+            new_cols.append(col)
+            seen.add(col)
+        else:
+            # Sub-dataframe con duplicados
+            sub = df.loc[:, duplicates]
+            # tomar primer no nulo hacia la derecha
+            combined = sub.bfill(axis=1).iloc[:, 0]
+            to_add[col] = combined
+            # marcar todos como vistos
+            for c in duplicates:
+                seen.add(c)
+
+    # Construir nuevo DataFrame (dropear duplicados y añadir combinados)
+    # Más sencillo: para cada col duplicada, dropear todas y luego añadir una
+    result = df.loc[:, ~df.columns.duplicated()].copy()
+    for col, series in to_add.items():
+        result[col] = series
+
+    # Asegurar no quedaron duplicados
+    result = result.loc[:, ~result.columns.duplicated()]
+    return result
+
+def load_and_prepare(csv_path: str,
+                     schema_path: str = "schema_mapping.json",
+                     allow_koi_depth_fraction: bool = True,
+                     convert_bkjd_to_bjd: bool = True):
+    """
+    Carga dataset TESS o KOI y lo estandariza:
+    - Mapping columnas (sinónimos/fuzzy)
+    - Consolidación de duplicados
+    - Normalización de disposition KOI
+    - Corrección de depth (fracción → ppm si aplica)
+    - Conversión opcional BKJD → BJD en epoch_bjd
+    - Imputación
+    - Separación train (CP/KP/FP) y candidatos (PC)
+    """
+    df = pd.read_csv(csv_path, comment='#', na_values=['',' '])
+
+    # 1. Mapping
+    schema = load_schema(schema_path)
+    exact_map, unmapped, fuzzy_suggestions = auto_map_columns(
+        list(df.columns), schema, fuzzy=True
+    )
+    df = apply_mapping(df, exact_map)
+
+    # 2. Consolidar duplicados (por si koi_disposition y koi_pdisposition quedaron juntos)
+    df = _collapse_duplicate_columns(df)
+
+    # 3. Validar requeridos
     needed = ['disposition'] + FEATURE_COLS
     missing = [c for c in needed if c not in df.columns]
     if missing:
-        raise ValueError(f"Faltan columnas requeridas: {missing}")
+        raise ValueError(
+            "Faltan columnas requeridas incluso tras mapping automático.\n"
+            f"Faltan: {missing}\n"
+            f"Sin mapear: {unmapped}\n"
+            f"Sugerencias fuzzy: {fuzzy_suggestions}"
+        )
 
-    keep_cols = list(dict.fromkeys(['tic_id','toi','disposition','epoch_bjd'] + FEATURE_COLS))
-    df = df[keep_cols].copy()
+    # 4. Normalizar disposición KOI
+    df['disposition'] = df['disposition'].replace(KOI_DISP_MAP)
 
-    # Imputación simple
+    # Filtrar solo disposiciones que reconocemos
+    valid_disp = {'CP','KP','FP','PC'}
+    df = df[df['disposition'].isin(valid_disp)].copy()
+
+    # 5. Ajustar depth si parece fracción
+    if allow_koi_depth_fraction and df['depth'].median() < 0.01:
+        df['depth'] = df['depth'] * 1e6  # convertir a ppm
+
+    # 6. Convertir BKJD -> BJD si corresponde
+    if convert_bkjd_to_bjd and 'epoch_bjd' in df.columns:
+        # Heurística: si median < 5000 asumimos BKJD (Kepler) y sumamos offset
+        if df['epoch_bjd'].dropna().median() < 5000:
+            df['epoch_bjd'] = df['epoch_bjd'] + 2454833.0
+
+    # 7. Imputación simple
     for c in FEATURE_COLS:
+        df[c] = pd.to_numeric(df[c], errors='coerce')
         df[c] = df[c].fillna(df[c].median())
 
+    keep_cols = list(dict.fromkeys(['tic_id','toi','disposition','epoch_bjd'] + FEATURE_COLS))
+    df = df[[c for c in keep_cols if c in df.columns]].copy()
+
+    # 8. Separar train y candidatos
     train_df = df[df['disposition'].isin(['CP','KP','FP'])].copy()
     candidates_df = df[df['disposition'] == 'PC'].copy()
     train_df['label'] = (train_df['disposition'].isin(['CP','KP'])).astype(int)
+
     return train_df, candidates_df
 
 def cross_validate(train_df, params, n_splits=5, calibrate=False):

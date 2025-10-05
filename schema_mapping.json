@@ -1,0 +1,108 @@
+{
+  "canonical_features": [
+    "period/days",
+    "duration/hours",
+    "depth",
+    "planet_radius",
+    "stellar_radius",
+    "stteff",
+    "logg",
+    "tess_mag",
+    "disposition",
+    "tic_id",
+    "toi",
+    "epoch_bjd"
+  ],
+  "synonyms": {
+    "period/days": [
+      "pl_orbper",
+      "period",
+      "orbital_period",
+      "p_days",
+      "period_days",
+      "period_d",
+      "koi_period"
+    ],
+    "duration/hours": [
+      "pl_trandurh",
+      "transit_duration",
+      "duration",
+      "dur_hours",
+      "tran_duration_h",
+      "koi_duration"
+    ],
+    "depth": [
+      "pl_trandep",
+      "transit_depth",
+      "depth_ppm",
+      "delta_flux",
+      "depth_frac",
+      "koi_depth"
+    ],
+    "planet_radius": [
+      "pl_rade",
+      "planet_r",
+      "radius_planet",
+      "rp_re",
+      "r_planet",
+      "koi_prad"
+    ],
+    "stellar_radius": [
+      "st_rad",
+      "star_radius",
+      "r_star",
+      "r_sun",
+      "stellar_r",
+      "koi_srad"
+    ],
+    "stteff": [
+      "st_teff",
+      "teff",
+      "star_teff",
+      "teff_k",
+      "koi_steff"
+    ],
+    "logg": [
+      "st_logg",
+      "log_g",
+      "stellar_logg",
+      "surface_gravity",
+      "koi_slogg"
+    ],
+    "tess_mag": [
+      "st_tmag",
+      "tmag",
+      "tessmag",
+      "tess_magnitude",
+      "koi_kepmag"
+    ],
+    "disposition": [
+      "tfopwg_disp",
+      "status",
+      "label",
+      "class",
+      "koi_disposition",
+      "koi_pdisposition"
+    ],
+    "tic_id": [
+      "tid",
+      "tic",
+      "ticid",
+      "target_id",
+      "kepid"
+    ],
+    "toi": [
+      "toi_id",
+      "toi_number",
+      "toi_name",
+      "kepoi_name"
+    ],
+    "epoch_bjd": [
+      "pl_tranmid",
+      "epoch",
+      "mid_transit_bjd",
+      "transit_midpoint",
+      "koi_time0bk"
+    ]
+  }
+}
