@@ -1,4 +1,5 @@
 import streamlit as st
+import requests, io
 import pandas as pd
 import json
 from pathlib import Path
@@ -7,6 +8,12 @@ from exoplanet_model import (
     score_candidates, save_artifacts, load_model,
     predict_single, compute_full_metrics, load_medians, FEATURE_COLS
 )
+dict_tables = {
+    "Seleccione una opcion": '',
+    "Kepler": "cumulative",
+    "Tess": "toi",
+    "Planetary Systems": "ps"
+}
 
 st.set_page_config(page_title="Exoplanet Predictor", layout="wide")
 st.title("Exoplanet Candidate Ranking – Binary Model")
@@ -27,6 +34,12 @@ default_params = {
     "random_state": 42,
     "objective": "binary"
 }
+dict_tables = {
+    "Seleccione una opcion": '',
+    "Kepler": "cumulative",
+    "Tess": "toi",
+    "Planetary Systems": "ps"
+}
 
 with st.sidebar:
     st.header("Entrenamiento")
@@ -41,13 +54,6 @@ with st.sidebar:
 # Cargar modelo y medianas si existen
 model = None
 medians = {}
-if MODEL_PATH.exists():
-    try:
-        model = load_model(MODEL_PATH)
-        st.success("Modelo cargado.")
-        medians = load_medians(META_PATH)
-    except Exception as e:
-        st.error(f"No se pudo cargar el modelo: {e}")
 
 # Entrenamiento
 if train_btn:
@@ -89,9 +95,31 @@ if train_btn:
     st.stop()
 
 # Tabs
-tab_ranking, tab_manual, tab_metadata = st.tabs(["Ranking PC", "Ingreso Manual", "Metadatos"])
+tab_database, tab_ranking, tab_manual, tab_metadata = st.tabs(["Data Base", "Ranking PC", "Ingreso Manual", "Metadatos"])
+
+with tab_database:
+    left_column, right_column = st.columns(2)
+    option = st.selectbox("Dataset", dict_tables.keys())
+    st.write(dict_tables[option])
+    if option != "Seleccione una opcion":
+        LINK = "https://exoplanetarchive.ipac.caltech.edu/TAP/sync"
+        q = f"SELECT top 50 * FROM {dict_tables[option]}"
+        r = requests.get(LINK, params={"query": q, "format": "csv"})
+        # @st.cache_data
+        def cargar_datos(nfilas):
+            data = pd.read_csv(io.StringIO(r.text), nrows=nfilas)
+            return data
+    data = cargar_datos(50)
+    st.write(data)
 
 with tab_ranking:
+    if MODEL_PATH.exists():
+        try:
+            model = load_model(MODEL_PATH)
+            st.success("Model Cargado. (TESS)")
+            medians = load_medians(META_PATH)
+        except Exception as e:
+            st.error(f"No se pudo cargar el modelo: {e}")
     st.subheader("Ranking de candidatos (PC)")
     if CANDS_PATH.exists():
         df_cands = pd.read_csv(CANDS_PATH)
